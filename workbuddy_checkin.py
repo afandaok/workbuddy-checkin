@@ -73,7 +73,7 @@ EP_TRIAL_CLAIM = "/billing/ide/trial"
 SESSION_DEAD_MARKERS = ["Offline user session not found", "12153"]
 
 # Token 过期预刷新余量
-TOKEN_REFRESH_MARGIN = 24 * 3600  # 过期前 24h 刷新
+TOKEN_REFRESH_MARGIN = 5 * 24 * 3600  # 过期前 5 天就刷新（防止服务端提前撤销）
 
 # HTTP 超时
 HTTP_TIMEOUT = 30
@@ -346,7 +346,7 @@ def perform_checkin(auth_data):
     return data, None
 
 
-def checkin_one_account(path, auth_data):
+def checkin_one_account(path, auth_data, _retry_on_401=True):
     """对单个账号执行签到流程。返回结果字典。"""
     acct = auth_data.get("account", {})
     nickname = acct.get("nickname", "")
@@ -373,12 +373,22 @@ def checkin_one_account(path, auth_data):
         result["message"] = "账号已禁用（会话失效）"
         return result
 
-    # 确保 token 有效
+    # 确保 token 有效（过期前 5 天就刷新，防止服务端提前撤销）
     auth_data = ensure_token_valid(path, auth_data)
 
     # 查询签到状态
     ci_status, ci_err = fetch_checkin_status(auth_data)
     if ci_err:
+        # 401 时尝试刷新 Token 并重试一次
+        if _retry_on_401 and "401" in ci_err and not is_session_dead(ci_err):
+            print(f"  [刷新] 签到遇 401，尝试刷新 Token 后重试...")
+            ok, msg = refresh_token(path, auth_data)
+            if ok:
+                print(f"  [刷新] {msg}")
+                return checkin_one_account(path, auth_data, _retry_on_401=False)
+            else:
+                print(f"  [刷新] {msg}")
+
         result["error"] = ci_err
         result["success"] = False
         # 如果是会话失效，标记 disabled
@@ -409,6 +419,16 @@ def checkin_one_account(path, auth_data):
     # 执行签到
     checkin_result, checkin_err = perform_checkin(auth_data)
     if checkin_err:
+        # 401 时尝试刷新 Token 并重试一次
+        if _retry_on_401 and "401" in checkin_err and not is_session_dead(checkin_err):
+            print(f"  [刷新] 签到遇 401，尝试刷新 Token 后重试...")
+            ok, msg = refresh_token(path, auth_data)
+            if ok:
+                print(f"  [刷新] {msg}")
+                return checkin_one_account(path, auth_data, _retry_on_401=False)
+            else:
+                print(f"  [刷新] {msg}")
+
         result["error"] = checkin_err
         result["success"] = False
         return result
