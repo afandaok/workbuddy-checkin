@@ -919,6 +919,10 @@ def cmd_signin(args):
     if BARK_URL:
         send_bark_notification(success_n, already_n, fail_n, global_n, skipped_n, results)
 
+    # 签到失败时返回非零退出码，让 GitHub Actions 显示 failure
+    if fail_n > 0:
+        sys.exit(1)
+
 
 def cmd_credit(args):
     """积分查询。"""
